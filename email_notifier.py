@@ -117,14 +117,11 @@ def send_email_notification(papers, days=3, translate=False):
             </div>
             """
 
-    html_content = html.format(count=len(papers), days=days, papers_html=papers_html)
-
     from datetime import datetime
     current_date = datetime.now().strftime("%y.%m.%d")
+    html_content = html.format(count=len(papers), days=days, papers_html=papers_html, current_date=current_date)
 
     msg = MIMEMultipart()
-    from datetime import datetime
-    current_date = datetime.now().strftime("%y.%m.%d")
     if translate:
         msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, 中英文对照]"
     else:
