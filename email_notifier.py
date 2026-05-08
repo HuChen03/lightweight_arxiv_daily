@@ -23,7 +23,7 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "XXX")
 EMAIL_TO = os.getenv("EMAIL_TO", "")
 
 
-def send_email_notification(papers, days=3, translate=False):
+def send_email_notification(papers, days=3, translate=False, time_window_extended=None):
     """发送论文通知邮件"""
     if not EMAIL_FROM or not EMAIL_PASSWORD or not EMAIL_TO:
         print("⚠️  邮件配置缺失，请设置环境变量：EMAIL_FROM, EMAIL_PASSWORD, EMAIL_TO")
@@ -41,7 +41,12 @@ def send_email_notification(papers, days=3, translate=False):
         if published < original_cutoff:
             papers_beyond_requested_days.append(p)
 
-    has_extended_papers = len(papers_beyond_requested_days) > 0
+    # Use the passed parameter to know if time window was extended, or check based on paper dates
+    # If time_window_extended is not None, use that value; otherwise determine based on paper dates
+    if time_window_extended is not None:
+        has_extended_papers = time_window_extended
+    else:
+        has_extended_papers = len(papers_beyond_requested_days) > 0
 
     current_date = datetime.now().strftime("%y.%m.%d")
 
@@ -112,7 +117,7 @@ def send_email_notification(papers, days=3, translate=False):
 
     # Generate extension note if needed
     if has_extended_papers:
-        extension_note = f'<div class="extension-note"><strong>ℹ️ Note:</strong> The following papers are from over {days} day(s) ago (time window extended to include at least 10 papers).</div>'
+        extension_note = f'<div class="extension-note"><strong>ℹ️ Note:</strong> The following papers are from over {days} day(s) ago (time window extended to include at least 5 papers).</div>'
     else:
         extension_note = ''
 

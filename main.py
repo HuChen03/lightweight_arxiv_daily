@@ -173,22 +173,22 @@ def fetch_recent_hepex(days=3, max_results=100, translate=False):
         papers = [data for _, data in papers_in_original_window[:max_results]]
         return papers
 
-    # If we have fewer than 3 papers or fewer than 10 papers, expand until we have at least 10
-    if len(papers_in_original_window) < 3 or len(papers_in_original_window) < 10:
-        print(f"Not enough papers found ({len(papers_in_original_window)} papers). Expanding time window to reach at least 10 papers...")
+    # If we have fewer than 3 papers or fewer than 5 papers, expand until we have at least 5
+    if len(papers_in_original_window) < 3 or len(papers_in_original_window) < 5:
+        print(f"Not enough papers found ({len(papers_in_original_window)} papers). Expanding time window to reach at least 5 papers...")
 
-        # Include more papers until we reach at least 10
-        if len(all_papers) >= 10:
-            # Take the 10 most recent papers
-            selected_papers = all_papers[:10]
+        # Include more papers until we reach at least 5
+        if len(all_papers) >= 5:
+            # Take the 5 most recent papers
+            selected_papers = all_papers[:5]
         else:
-            # If there are fewer than 10 papers total, take all of them
+            # If there are fewer than 5 papers total, take all of them
             selected_papers = all_papers
 
         # Convert back to the format expected
         papers = [data for _, data in selected_papers[:max_results]]
     else:
-        # If we have 3 or more papers but 10 or more, just return those in the original window
+        # If we have 3 or more papers but 5 or more, just return those in the original window
         papers = [data for _, data in papers_in_original_window[:max_results]]
 
     return papers
@@ -251,4 +251,10 @@ if __name__ == "__main__":
 
     # 发送邮件通知
     if args.email:
-        send_email_notification(papers, days=args.days, translate=args.translate)
+        # Determine if time window was extended
+        original_cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
+        original_papers_count = sum(1 for p in papers
+                                   if datetime.strptime(p['published'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc) >= original_cutoff)
+        time_window_extended = original_papers_count < 3 or original_papers_count < 5
+
+        send_email_notification(papers, days=args.days, translate=args.translate, time_window_extended=time_window_extended)
