@@ -156,10 +156,16 @@ def send_email_notification(papers, days=3, translate=False):
     html_content = html.format(count=len(papers), days=days, papers_html=papers_html, current_date=current_date, extension_note=extension_note)
 
     msg = MIMEMultipart()
-    if translate:
-        msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, 中英文对照]"
+    if has_extended_papers:
+        if translate:
+            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, extended from {days} day(s), 中英文对照]"
+        else:
+            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, extended from {days} day(s)]"
     else:
-        msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers]"
+        if translate:
+            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, 中英文对照]"
+        else:
+            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers]"
 
     msg['From'] = EMAIL_FROM
     msg['To'] = EMAIL_TO
