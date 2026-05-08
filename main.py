@@ -138,6 +138,7 @@ def fetch_recent_hepex(days=3, max_results=100, translate=False):
     response = requests.get(ARXIV_API, params=params)
     feed = feedparser.parse(response.text)
 
+    # Calculate exact time cutoff (past N days = N * 24 hours from now)
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     papers = []

@@ -30,6 +30,9 @@ def send_email_notification(papers, days=3, translate=False):
         return False
 
     # 构建 HTML 邮件内容
+    from datetime import datetime
+    current_date = datetime.now().strftime("%y.%m.%d")
+
     if translate:
         html = """
         <html>
@@ -116,11 +119,14 @@ def send_email_notification(papers, days=3, translate=False):
 
     html_content = html.format(count=len(papers), days=days, papers_html=papers_html)
 
+    from datetime import datetime
+    current_date = datetime.now().strftime("%y.%m.%d")
+
     msg = MIMEMultipart()
     if translate:
-        msg['Subject'] = f"📚 {len(papers)} 新的 hep-ex 论文 (最近 {days} 天) [中英文对照]"
+        msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, 中英文对照]"
     else:
-        msg['Subject'] = f"📚 {len(papers)} New hep-ex Papers (Last {days} Days)"
+        msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers]"
 
     msg['From'] = EMAIL_FROM
     msg['To'] = EMAIL_TO
