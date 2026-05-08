@@ -45,6 +45,18 @@ def send_email_notification(papers, days=3, translate=False):
 
     current_date = datetime.now().strftime("%y.%m.%d")
 
+    msg = MIMEMultipart()
+    if has_extended_papers:
+        if translate:
+            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, extended from {days} day(s), 中英文对照]"
+        else:
+            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, extended from {days} day(s)]"
+    else:
+        if translate:
+            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, 中英文对照]"
+        else:
+            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers]"
+
     if translate:
         html = """
         <html>
@@ -100,13 +112,7 @@ def send_email_notification(papers, days=3, translate=False):
 
     # Generate extension note if needed
     if has_extended_papers:
-        extension_note = f'<div class="extension-note"><strong>ℹ️ Note:</strong> The following are papers from over {days} day(s) ago (extended to include at least 10 papers):<br/>'
-        for p in papers_beyond_requested_days:
-            # Extract only the first 50 characters of the title for the note
-            title_snippet = p['title'][:50] + "..." if len(p['title']) > 50 else p['title']
-            pub_date = p['published'].replace("T", " ").replace("Z", "")
-            extension_note += f'• <a href="{p["link"]}">{title_snippet}</a> ({pub_date})<br/>'
-        extension_note += '</div>'
+        extension_note = f'<div class="extension-note"><strong>ℹ️ Note:</strong> The following papers are from over {days} day(s) ago (time window extended to include at least 10 papers).</div>'
     else:
         extension_note = ''
 
