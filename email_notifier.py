@@ -52,7 +52,7 @@ def send_email_notification(papers, days=3, translate=False):
         <body>
             <div class="header">
                 <h2>📚 最新 hep-ex 论文 [中英文对照]</h2>
-                <p>{count} 篇论文发表于最近 {days} 天</p>
+                <p>{count} 篇论文 - Arxiv Hep-ex Daily Paper Digest {current_date}</p>
             </div>
             {papers_html}
         </body>
@@ -74,8 +74,8 @@ def send_email_notification(papers, days=3, translate=False):
         </head>
         <body>
             <div class="header">
-                <h2>📚 Recent hep-ex Papers</h2>
-                <p>{count} papers found in the last {days} days</p>
+                <h2>📚 Arxiv Hep-ex Daily Paper Digest {current_date}</h2>
+                <p>{count} papers</p>
             </div>
             {papers_html}
         </body>
@@ -123,6 +123,8 @@ def send_email_notification(papers, days=3, translate=False):
     current_date = datetime.now().strftime("%y.%m.%d")
 
     msg = MIMEMultipart()
+    from datetime import datetime
+    current_date = datetime.now().strftime("%y.%m.%d")
     if translate:
         msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, 中英文对照]"
     else:

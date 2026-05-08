@@ -177,9 +177,9 @@ if __name__ == "__main__":
 
     print("=" * 80)
     if args.translate:
-        print(f"📚 最新 hep-ex 论文 (最近 {args.days} 天) - 找到 {len(papers)} 篇论文 [中英文对照]")
+        print(f"📚 Arxiv Hep-ex Daily Paper Digest {datetime.now().strftime('%y.%m.%d')} [{len(papers)} papers, 中英文对照]")
     else:
-        print(f"📚 Recent hep-ex Papers (Last {args.days} Days) - {len(papers)} papers found")
+        print(f"📚 Arxiv Hep-ex Daily Paper Digest {datetime.now().strftime('%y.%m.%d')} [{len(papers)} papers]")
     print("=" * 80)
     print()
 
