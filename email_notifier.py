@@ -30,7 +30,19 @@ def send_email_notification(papers, days=3, translate=False):
         return False
 
     # 构建 HTML 邮件内容
-    from datetime import datetime
+    from datetime import datetime, timedelta, timezone
+
+    # Determine if we had to extend beyond the requested days to get enough papers
+    original_cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    papers_beyond_requested_days = []
+
+    for p in papers:
+        published = datetime.strptime(p['published'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        if published < original_cutoff:
+            papers_beyond_requested_days.append(p)
+
+    has_extended_papers = len(papers_beyond_requested_days) > 0
+
     current_date = datetime.now().strftime("%y.%m.%d")
 
     if translate:
@@ -47,6 +59,7 @@ def send_email_notification(papers, days=3, translate=False):
                 .abstract {{ color: #444; font-size: 14px; margin: 10px 0; }}
                 .original-abstract {{ color: #666; font-size: 13px; margin: 8px 0; }}
                 .link {{ color: #007bff; text-decoration: none; }}
+                .extension-note {{ background-color: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; margin: 10px 0; }}
             </style>
         </head>
         <body>
@@ -54,6 +67,7 @@ def send_email_notification(papers, days=3, translate=False):
                 <h2>📚 最新 hep-ex 论文 [中英文对照]</h2>
                 <p>{count} 篇论文 - Arxiv Hep-ex Daily Paper Digest {current_date}</p>
             </div>
+            {extension_note}
             {papers_html}
         </body>
         </html>
@@ -70,6 +84,7 @@ def send_email_notification(papers, days=3, translate=False):
                 .meta {{ color: #666; font-size: 14px; margin: 5px 0; }}
                 .abstract {{ color: #444; font-size: 14px; margin: 10px 0; }}
                 .link {{ color: #007bff; text-decoration: none; }}
+                .extension-note {{ background-color: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; margin: 10px 0; }}
             </style>
         </head>
         <body>
@@ -77,10 +92,23 @@ def send_email_notification(papers, days=3, translate=False):
                 <h2>📚 Arxiv Hep-ex Daily Paper Digest {current_date}</h2>
                 <p>{count} papers</p>
             </div>
+            {extension_note}
             {papers_html}
         </body>
         </html>
         """
+
+    # Generate extension note if needed
+    if has_extended_papers:
+        extension_note = f'<div class="extension-note"><strong>ℹ️ Note:</strong> The following are papers from over {days} day(s) ago (extended to include at least 10 papers):<br/>'
+        for p in papers_beyond_requested_days:
+            # Extract only the first 50 characters of the title for the note
+            title_snippet = p['title'][:50] + "..." if len(p['title']) > 50 else p['title']
+            pub_date = p['published'].replace("T", " ").replace("Z", "")
+            extension_note += f'• <a href="{p["link"]}">{title_snippet}</a> ({pub_date})<br/>'
+        extension_note += '</div>'
+    else:
+        extension_note = ''
 
     papers_html = ""
     for i, p in enumerate(papers, 1):
@@ -119,7 +147,7 @@ def send_email_notification(papers, days=3, translate=False):
 
     from datetime import datetime
     current_date = datetime.now().strftime("%y.%m.%d")
-    html_content = html.format(count=len(papers), days=days, papers_html=papers_html, current_date=current_date)
+    html_content = html.format(count=len(papers), days=days, papers_html=papers_html, current_date=current_date, extension_note=extension_note)
 
     msg = MIMEMultipart()
     if translate:

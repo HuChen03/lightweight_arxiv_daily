@@ -138,29 +138,58 @@ def fetch_recent_hepex(days=3, max_results=100, translate=False):
     response = requests.get(ARXIV_API, params=params)
     feed = feedparser.parse(response.text)
 
-    # Calculate exact time cutoff (past N days = N * 24 hours from now)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    # Start with the original time window
+    original_cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    papers = []
+    # Get all papers within the feed sorted by date (already sorted by the API)
+    all_papers = []
     for entry in feed.entries:
         published = datetime.strptime(entry.published, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
-        if published >= cutoff:
-            paper_data = {
-                "title": entry.title,
-                "authors": [a.name for a in entry.authors],
-                "link": entry.link,
-                "published": entry.published,
-                "summary": entry.summary  # Full abstract
-            }
+        paper_data = {
+            "title": entry.title,
+            "authors": [a.name for a in entry.authors],
+            "link": entry.link,
+            "published": entry.published,
+            "summary": entry.summary  # Full abstract
+        }
 
-            # Add translated content if requested
-            if translate:
-                print(f"Translating paper: {entry.title[:50]}...")  # Inform user of progress
-                paper_data["translated_summary"] = translate_to_chinese(entry.summary)
-                paper_data["translated_title"] = translate_to_chinese(entry.title)
+        # Add translated content if requested
+        if translate:
+            print(f"Translating paper: {entry.title[:50]}...")  # Inform user of progress
+            paper_data["translated_summary"] = translate_to_chinese(entry.summary)
+            paper_data["translated_title"] = translate_to_chinese(entry.title)
 
-            papers.append(paper_data)
+        all_papers.append((published, paper_data))
+
+    # Sort by date descending (most recent first)
+    all_papers.sort(key=lambda x: x[0], reverse=True)
+
+    # First, get papers within the original time window
+    papers_in_original_window = [(pub, data) for pub, data in all_papers if pub >= original_cutoff]
+
+    # If we have at least 3 papers and at least 10 papers, return them
+    if len(papers_in_original_window) >= 3 and len(papers_in_original_window) >= 10:
+        papers = [data for _, data in papers_in_original_window[:max_results]]
+        return papers
+
+    # If we have fewer than 3 papers or fewer than 10 papers, expand until we have at least 10
+    if len(papers_in_original_window) < 3 or len(papers_in_original_window) < 10:
+        print(f"Not enough papers found ({len(papers_in_original_window)} papers). Expanding time window to reach at least 10 papers...")
+
+        # Include more papers until we reach at least 10
+        if len(all_papers) >= 10:
+            # Take the 10 most recent papers
+            selected_papers = all_papers[:10]
+        else:
+            # If there are fewer than 10 papers total, take all of them
+            selected_papers = all_papers
+
+        # Convert back to the format expected
+        papers = [data for _, data in selected_papers[:max_results]]
+    else:
+        # If we have 3 or more papers but 10 or more, just return those in the original window
+        papers = [data for _, data in papers_in_original_window[:max_results]]
 
     return papers
 
@@ -175,11 +204,16 @@ if __name__ == "__main__":
 
     papers = fetch_recent_hepex(days=args.days, max_results=args.max_results, translate=args.translate)
 
+    from datetime import datetime, timezone
+    current_utc_time = datetime.now(timezone.utc)
+    print(f"Current UTC time: {current_utc_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
     print("=" * 80)
+    current_date_utc = datetime.now(timezone.utc).strftime("%y.%m.%d")
+
     if args.translate:
-        print(f"📚 Arxiv Hep-ex Daily Paper Digest {datetime.now().strftime('%y.%m.%d')} [{len(papers)} papers, 中英文对照]")
+        print(f"📚 Arxiv Hep-ex Daily Paper Digest {current_date_utc} [{len(papers)} papers, 中英文对照]")
     else:
-        print(f"📚 Arxiv Hep-ex Daily Paper Digest {datetime.now().strftime('%y.%m.%d')} [{len(papers)} papers]")
+        print(f"📚 Arxiv Hep-ex Daily Paper Digest {current_date_utc} [{len(papers)} papers]")
     print("=" * 80)
     print()
 
