@@ -69,8 +69,8 @@ def send_email_notification(papers, days=3, translate=False, time_window_extende
             <style>
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; }}
                 .header {{ background-color: #f4f4f4; padding: 20px; border-radius: 5px; }}
-                .paper {{ margin: 20px 0; padding: 15px; border-left: 4px solid #007bff; background-color: #fafafa; }}
-                .title {{ font-size: 16px; font-weight: bold; color: #333; }}
+                .paper {{ margin: 30px 0; padding: 15px; border-left: 4px solid #007bff; background-color: #fafafa; }}
+                .title {{ font-size: 18px; font-weight: bold; color: #333; }}
                 .original-title {{ font-size: 14px; font-style: italic; color: #666; }}
                 .meta {{ color: #666; font-size: 14px; margin: 5px 0; }}
                 .abstract {{ color: #444; font-size: 14px; margin: 10px 0; }}
@@ -96,8 +96,8 @@ def send_email_notification(papers, days=3, translate=False, time_window_extende
             <style>
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; }}
                 .header {{ background-color: #f4f4f4; padding: 20px; border-radius: 5px; }}
-                .paper {{ margin: 20px 0; padding: 15px; border-left: 4px solid #007bff; background-color: #fafafa; }}
-                .title {{ font-size: 16px; font-weight: bold; color: #333; }}
+                .paper {{ margin: 30px 0; padding: 15px; border-left: 4px solid #007bff; background-color: #fafafa; }}
+                .title {{ font-size: 18px; font-weight: bold; color: #333; }}
                 .meta {{ color: #666; font-size: 14px; margin: 5px 0; }}
                 .abstract {{ color: #444; font-size: 14px; margin: 10px 0; }}
                 .link {{ color: #007bff; text-decoration: none; }}
@@ -136,7 +136,7 @@ def send_email_notification(papers, days=3, translate=False, time_window_extende
             # Include both translated and original content
             papers_html += f"""
             <div class="paper">
-                <div class="title">[{i}] {p['translated_title']}</div>
+                <div class="title">[{i}] <strong>{p['translated_title']}</strong></div>
                 <div class="original-title">Original Title: {p['title']}</div>
                 <div class="meta">📅 {pub_date}</div>
                 <div class="meta">👤 {authors_display}</div>
@@ -148,7 +148,7 @@ def send_email_notification(papers, days=3, translate=False, time_window_extende
         else:
             papers_html += f"""
             <div class="paper">
-                <div class="title">[{i}] {p['title']}</div>
+                <div class="title">[{i}] <strong>{p['title']}</strong></div>
                 <div class="meta">📅 {pub_date}</div>
                 <div class="meta">👤 {authors_display}</div>
                 <div class="abstract">📝 {p['summary']}</div>
@@ -157,20 +157,20 @@ def send_email_notification(papers, days=3, translate=False, time_window_extende
             """
 
     from datetime import datetime
-    current_date = datetime.now().strftime("%y.%m.%d")
-    html_content = html.format(count=len(papers), days=days, papers_html=papers_html, current_date=current_date, extension_note=extension_note)
+    current_date_full_year = datetime.now().strftime("%Y.%m.%d")
+    html_content = html.format(count=len(papers), days=days, papers_html=papers_html, current_date=current_date_full_year, extension_note=extension_note)
 
     msg = MIMEMultipart()
     if has_extended_papers:
         if translate:
-            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, extended from {days} day(s), 中英文对照]"
+            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date_full_year} [{len(papers)} papers, extended from {days} day(s), 中英文对照]"
         else:
-            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, extended from {days} day(s)]"
+            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date_full_year} [{len(papers)} papers, extended from {days} day(s)]"
     else:
         if translate:
-            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, 中英文对照]"
+            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date_full_year} [{len(papers)} papers, 中英文对照]"
         else:
-            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers]"
+            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date_full_year} [{len(papers)} papers]"
 
     msg['From'] = EMAIL_FROM
     msg['To'] = EMAIL_TO

@@ -181,14 +181,28 @@ def fetch_recent_hepex(days=3, max_results=100, translate=False):
         if len(all_papers) >= 5:
             # Take the 5 most recent papers
             selected_papers = all_papers[:5]
+            # Print how far back in time we had to go
+            oldest_paper_date = selected_papers[-1][0]  # Last paper is oldest among selected
+            original_request_end = original_cutoff
+            if oldest_paper_date < original_request_end:
+                time_diff = original_request_end - oldest_paper_date
+                hours_extended = int(time_diff.total_seconds() / 3600)
+                print(f"Time window extended to include papers from {hours_extended} hours ago to satisfy minimum count.")
         else:
             # If there are fewer than 5 papers total, take all of them
             selected_papers = all_papers
+            if all_papers:  # If there are any papers at all
+                oldest_paper_date = all_papers[-1][0]
+                original_request_end = original_cutoff
+                if oldest_paper_date < original_request_end:
+                    time_diff = original_request_end - oldest_paper_date
+                    hours_extended = int(time_diff.total_seconds() / 3600)
+                    print(f"Time window extended to include papers from {hours_extended} hours ago (only {len(all_papers)} papers available total).")
 
         # Convert back to the format expected
         papers = [data for _, data in selected_papers[:max_results]]
     else:
-        # If we have 3 or more papers but 5 or more, just return those in the original window
+        # If we have 3 or more papers and at least 5, just return those in the original window
         papers = [data for _, data in papers_in_original_window[:max_results]]
 
     return papers
@@ -208,12 +222,14 @@ if __name__ == "__main__":
     current_utc_time = datetime.now(timezone.utc)
     print(f"Current UTC time: {current_utc_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
     print("=" * 80)
-    current_date_utc = datetime.now(timezone.utc).strftime("%y.%m.%d")
+    from zoneinfo import ZoneInfo
+    european_tz = ZoneInfo("Europe/Berlin")
+    current_date_full_year = datetime.now(european_tz).strftime("%Y.%m.%d")
 
     if args.translate:
-        print(f"📚 Arxiv Hep-ex Daily Paper Digest {current_date_utc} [{len(papers)} papers, 中英文对照]")
+        print(f"📚 Arxiv Hep-ex Daily Paper Digest {current_date_full_year} [{len(papers)} papers, 中英文对照]")
     else:
-        print(f"📚 Arxiv Hep-ex Daily Paper Digest {current_date_utc} [{len(papers)} papers]")
+        print(f"📚 Arxiv Hep-ex Daily Paper Digest {current_date_full_year} [{len(papers)} papers]")
     print("=" * 80)
     print()
 
@@ -248,6 +264,7 @@ if __name__ == "__main__":
         print(f"    🔗 Link: {p['link']}")
         print("-" * 80)
         print()
+        print()  # Add an extra blank line for better spacing
 
     # 发送邮件通知
     if args.email:
