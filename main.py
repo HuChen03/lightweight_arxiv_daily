@@ -6,125 +6,170 @@ from email_notifier import send_email_notification
 import urllib.parse
 import os
 import json
+import sys
+import random
+import time
+import re
 from translate import Translator as OfflineTranslator
 
 
 ARXIV_API = "http://export.arxiv.org/api/query"
 
-def translate_to_chinese(text, max_length=4000):
-    """
-    Translate English text to Chinese using Microsoft Translator API as primary option.
-    Falls back to the translate library if Microsoft API is unavailable.
-    Implements chunk-based translation to avoid rate limits.
-    """
-    import re
+def _google_split_text(text, max_chars=2000):
+    """Split long text into chunks for Google Translate."""
+    text = re.sub(r"\s+", " ", text.strip())
+    if not text:
+        return []
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    chunks = []
+    current = ""
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        if len(sentence) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            for i in range(0, len(sentence), max_chars):
+                chunks.append(sentence[i:i + max_chars])
+            continue
+        if not current:
+            current = sentence
+        elif len(current) + 1 + len(sentence) <= max_chars:
+            current += " " + sentence
+        else:
+            chunks.append(current)
+            current = sentence
+    if current:
+        chunks.append(current)
+    return chunks
 
-    # Check if text is mostly English (contains Latin characters)
+
+def _google_translate_chunk(text, source="en", target="zh-CN", timeout=25):
+    """Translate a single chunk via Google's unofficial Translate API."""
+    params = {
+        "client": "gtx",
+        "sl": source,
+        "tl": target,
+        "dt": "t",
+        "q": text,
+    }
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0 Safari/537.36"
+        ),
+        "Accept": "application/json,text/plain,*/*",
+    }
+    try:
+        r = requests.get(
+            "https://translate.googleapis.com/translate_a/single",
+            params=params, headers=headers, timeout=timeout,
+        )
+    except requests.Timeout:
+        raise Exception("translate_timeout")
+    except requests.RequestException as e:
+        raise Exception(f"translate_network_error: {e}")
+
+    if r.status_code in (403, 429):
+        raise Exception(f"translate_blocked_or_rate_limited_http_{r.status_code}")
+    if 500 <= r.status_code <= 599:
+        raise Exception(f"translate_server_error_http_{r.status_code}")
+    if r.status_code != 200:
+        raise Exception(f"translate_unexpected_http_status_{r.status_code}")
+
+    raw = r.text.strip()
+    if not raw:
+        raise Exception("translate_empty_response")
+    if raw.startswith("<") or "text/html" in r.headers.get("content-type", "").lower():
+        raise Exception("translate_html_response_instead_of_json")
+
+    try:
+        data = r.json()
+    except json.JSONDecodeError as e:
+        raise Exception("translate_malformed_json") from e
+
+    if not isinstance(data, list) or not data or not isinstance(data[0], list):
+        raise Exception("translate_unexpected_json_structure")
+    pieces = []
+    for seg in data[0]:
+        if isinstance(seg, list) and len(seg) > 0 and isinstance(seg[0], str):
+            pieces.append(seg[0])
+    translated = "".join(pieces).strip()
+    if not translated:
+        raise Exception("translate_empty_translation_text")
+    return translated
+
+
+def _google_translate_with_retries(text, source="en", target="zh-CN", retries=3, sleep_base=2.0):
+    """Translate text via Google with chunking and retry logic."""
+    chunks = _google_split_text(text)
+    if not chunks:
+        raise Exception("translate_empty_input_text")
+
+    translated_chunks = []
+    for idx, chunk in enumerate(chunks, start=1):
+        last_error = None
+        for attempt in range(1, retries + 1):
+            try:
+                translated_chunks.append(
+                    _google_translate_chunk(chunk, source=source, target=target)
+                )
+                break
+            except Exception as e:
+                last_error = e
+                wait = sleep_base * attempt + random.uniform(0.0, 1.5)
+                print(
+                    f"[warning] Google translate chunk {idx}/{len(chunks)} attempt "
+                    f"{attempt}/{retries} failed: {e}",
+                    file=sys.stderr,
+                )
+                if attempt < retries:
+                    time.sleep(wait)
+        else:
+            raise Exception(
+                f"translate_failed_after_retries; "
+                f"chunk={idx}/{len(chunks)}; last_error={last_error}"
+            )
+        if idx < len(chunks):
+            time.sleep(0.5 + random.uniform(0.0, 0.5))
+
+    return "".join(translated_chunks).strip()
+
+
+def translate_to_chinese(text, max_length=20000):
+    """
+    Translate English text to Chinese using Google Translate (unofficial API) as primary option.
+    Falls back to the offline translate library if Google is unavailable.
+    Uses chunk-based translation to handle long texts without hitting API limits.
+    """
+    # Check if text is already Chinese (no Latin characters)
     if not re.search(r'[a-zA-Z]', text):
-        # Already appears to be Chinese or non-Latin
         return text
 
-    # Limit the length to avoid hitting API limits
+    # Allow long text — the chunking handles splitting internally
     text_to_translate = text[:max_length]
 
-    # Split text into sentences to perform chunk-based translation
-    def split_into_sentences(text):
-        # Split by sentence endings (., !, ?, etc.) but keep the delimiters
-        sentences = re.split(r'(?<=[.!?。！？])\s+', text.strip())
-        # Clean up empty strings and join sentences with appropriate spacing
-        sentences = [s.strip() for s in sentences if s.strip()]
-        return sentences
-
-    def translate_chunk(chunk_text, method='microsoft'):
-        """Translate a single chunk of text"""
-        if method == 'microsoft':
-            subscription_key = os.getenv('MICROSOFT_TRANSLATOR_KEY')
-            region = os.getenv('MICROSOFT_TRANSLATOR_REGION', 'global')
-
-            if not subscription_key:
-                return None  # Skip Microsoft if no key
-
-            try:
-                # Microsoft Translator API endpoint
-                endpoint = "https://api.cognitive.microsofttranslator.com"
-                path = '/translate'
-                constructed_url = endpoint + path
-
-                params = {
-                    'api-version': '3.0',
-                    'from': 'en',
-                    'to': 'zh-Hans'  # Simplified Chinese
-                }
-
-                headers = {
-                    'Ocp-Apim-Subscription-Key': subscription_key,
-                    'Ocp-Apim-Subscription-Region': region,
-                    'Content-type': 'application/json',
-                    'X-ClientTraceId': str(hash(chunk_text))[:32]  # Optional trace ID
-                }
-
-                body = [{
-                    'text': chunk_text
-                }]
-
-                response = requests.post(constructed_url, params=params, headers=headers, json=body)
-
-                if response.status_code == 200:
-                    result = response.json()
-                    if result and len(result) > 0 and 'translations' in result[0]:
-                        translated_text = result[0]['translations'][0].get('text', '')
-                        return translated_text
-            except Exception as e:
-                print(f"Microsoft Translator error for chunk: {e}")
-                return None
-        else:  # offline translator
-            try:
-                offline_translator = OfflineTranslator(to_lang="zh", from_lang="en")
-                translated_text = offline_translator.translate(chunk_text)
-                if "MYMEMORY WARNING" not in translated_text:  # Filter out warnings from the service
-                    return translated_text
-            except Exception as e:
-                print(f"Offline translation error for chunk: {e}")
-                return None
-        return None
-
-    # Perform chunk-based translation
-    sentences = split_into_sentences(text_to_translate)
-
-    if len(sentences) <= 1:
-        # If text is short enough or cannot be split further, translate as a whole
-        # Try Microsoft first
-        result = translate_chunk(text_to_translate, 'microsoft')
-        if result is not None:
+    # Primary: Google Translate
+    try:
+        result = _google_translate_with_retries(text_to_translate)
+        if result:
             return result
+    except Exception as e:
+        print(f"Google Translate failed: {e}", file=sys.stderr)
 
-        # Fallback to offline translator
-        result = translate_chunk(text_to_translate, 'offline')
-        if result is not None:
-            return result
-    else:
-        # Translate sentence by sentence
-        translated_parts = []
+    # Fallback: offline translator
+    try:
+        offline_translator = OfflineTranslator(to_lang="zh", from_lang="en")
+        translated_text = offline_translator.translate(text_to_translate)
+        if translated_text and "MYMEMORY WARNING" not in translated_text:
+            return translated_text
+    except Exception as e:
+        print(f"Offline translation error: {e}", file=sys.stderr)
 
-        for sentence in sentences:
-            # First try Microsoft API
-            translated_sentence = translate_chunk(sentence, 'microsoft')
-
-            if translated_sentence is None:
-                # If Microsoft fails, try offline translator
-                translated_sentence = translate_chunk(sentence, 'offline')
-
-            if translated_sentence is not None:
-                translated_parts.append(translated_sentence)
-            else:
-                # If both methods fail, keep the original sentence with a note
-                translated_parts.append(f"{sentence}\n\n[翻译失败，请检查网络连接]")
-
-        # Join translated parts back together
-        return ' '.join(translated_parts)
-
-    # If all methods fail, return original text with note
-    return f"{text}\n\n[翻译功能: 如需完整翻译，请设置 MICROSOFT_TRANSLATOR_KEY 环境变量或检查网络连接]"
+    return f"{text}\n\n[翻译功能: 如需翻译，请检查网络连接]"
 
 def fetch_recent_hepex(days=3, max_results=100, translate=False):
     params = {
@@ -244,27 +289,28 @@ if __name__ == "__main__":
         else:
             authors_display = ', '.join(author_list)
 
-        # Display title and possibly translated title
         if args.translate and 'translated_title' in p:
-            print(f"[{i}] {p['translated_title']}")
-            print(f"    Original Title: {p['title']}")
+            # ── 中文 ──
+            print(f"[{i} - 中文]")
+            print(f"    标题: {p['translated_title']}")
+            print(f"    摘要: {p['translated_summary']}")
+            print()
+            # ── English ──
+            print(f"[{i} - English]")
+            print(f"    Title: {p['title']}")
+            print(f"    📅 Published: {pub_date}")
+            print(f"    👤 Authors: {authors_display}")
+            print(f"    📝 Abstract: {p['summary']}")
+            print(f"    🔗 Link: {p['link']}")
         else:
             print(f"[{i}] {p['title']}")
-
-        print(f"    📅 Published: {pub_date}")
-        print(f"    👤 Authors: {authors_display}")
-
-        # Display abstract and possibly translated abstract
-        if args.translate and 'translated_summary' in p:
-            print(f"    📝 Abstract (中文): {p['translated_summary']}")
-            print(f"    📝 Abstract (English): {p['summary']}")
-        else:
+            print(f"    📅 Published: {pub_date}")
+            print(f"    👤 Authors: {authors_display}")
             print(f"    📝 Abstract: {p['summary']}")
+            print(f"    🔗 Link: {p['link']}")
 
-        print(f"    🔗 Link: {p['link']}")
         print("-" * 80)
         print()
-        print()  # Add an extra blank line for better spacing
 
     # 发送邮件通知
     if args.email:
