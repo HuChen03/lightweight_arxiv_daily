@@ -1,213 +1,292 @@
-import smtplib
+import html
 import os
-from email.mime.text import MIMEText
+import smtplib
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
-from dotenv import load_dotenv
+from email.mime.text import MIMEText
 from pathlib import Path
+from typing import Any
 
-# 获取项目根目录
+from dotenv import load_dotenv
+
+
 BASE_DIR = Path(__file__).parent
 ENV_FILE = BASE_DIR / ".env"
 
-# 加载 .env 文件中的环境变量（如果存在）
-# 系统环境变量会优先于 .env 文件中的配置
 if ENV_FILE.exists():
     load_dotenv(dotenv_path=ENV_FILE)
 
-# 邮件配置（从环境变量读取）
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
 EMAIL_FROM = os.getenv("EMAIL_FROM", "")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "XXX")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 EMAIL_TO = os.getenv("EMAIL_TO", "")
 
 
-def send_email_notification(papers, days=3, translate=False, time_window_extended=None):
-    """发送论文通知邮件"""
+def esc(value: Any) -> str:
+    return html.escape("" if value is None else str(value), quote=True)
+
+
+def format_authors(authors: list[str]) -> str:
+    if not authors:
+        return "Unknown authors"
+    if len(authors) > 5:
+        return ", ".join(authors[:5]) + f", ... and {len(authors) - 5} more authors"
+    return ", ".join(authors)
+
+
+def is_digest_item(item: dict[str, Any]) -> bool:
+    return "source_paper" in item and "llm_analysis" in item
+
+
+def has_extended_papers(items: list[dict[str, Any]], days: int) -> bool:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    papers = []
+    for item in items:
+        papers.append(item["source_paper"] if is_digest_item(item) else item)
+    for paper in papers:
+        published = datetime.strptime(paper["published"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        if published < cutoff:
+            return True
+    return False
+
+
+def render_related_papers(related_papers: list[dict[str, Any]]) -> str:
+    if not related_papers:
+        return '<div class="empty-related">No related papers found.</div>'
+
+    parts = []
+    for paper in related_papers:
+        matched = ", ".join(paper.get("matched_keywords", []))
+        parts.append(
+            f"""
+            <li>
+                <a href="{esc(paper.get('link'))}">{esc(paper.get('title'))}</a>
+                <span class="related-date">{esc(str(paper.get('published', ''))[:10])}</span>
+                <div class="related-meta">Matched: {esc(matched or 'query terms')}</div>
+            </li>
+            """
+        )
+    return '<ul class="related-list">' + "\n".join(parts) + "</ul>"
+
+
+def render_digest_item(index: int, item: dict[str, Any]) -> str:
+    paper = item["source_paper"]
+    analysis = item.get("llm_analysis", {})
+    related_papers = item.get("related_papers", [])
+    pub_date = paper["published"].replace("T", " ").replace("Z", "")
+    keywords = ", ".join(analysis.get("keywords", []))
+    query_terms = ", ".join(analysis.get("query_terms", []))
+
+    pdf_link = paper.get("pdf_link") or paper.get("link")
+    translated_title = paper.get("translated_title")
+    translated_summary = paper.get("translated_summary")
+
+    translated_block = ""
+    if translated_title or translated_summary:
+        translated_block = f"""
+        <div class="translated">
+            <div><strong>中文标题:</strong> {esc(translated_title or '')}</div>
+            <div><strong>中文摘要:</strong> {esc(translated_summary or '')}</div>
+        </div>
+        """
+
+    return f"""
+    <section class="paper">
+        <h3>[{index}] {esc(paper.get('title'))}</h3>
+        <div class="meta">
+            {esc(pub_date)} · {esc(paper.get('primary_category'))} · {esc(format_authors(paper.get('authors', [])))}
+        </div>
+        {translated_block}
+        <p class="summary"><strong>LLM Summary:</strong> {esc(analysis.get('topic_summary', ''))}</p>
+        <p class="focus"><strong>Focus:</strong> {esc(analysis.get('technical_focus', ''))}</p>
+        <p class="keywords"><strong>Keywords:</strong> {esc(keywords)}</p>
+        <p class="keywords"><strong>arXiv query terms:</strong> {esc(query_terms)}</p>
+        <div class="links">
+            <a href="{esc(paper.get('link'))}">arXiv</a>
+            <a href="{esc(pdf_link)}">PDF</a>
+        </div>
+        <div class="abstract"><strong>Abstract:</strong> {esc(paper.get('summary'))}</div>
+        <h4>Related papers</h4>
+        {render_related_papers(related_papers)}
+    </section>
+    """
+
+
+def render_legacy_paper(index: int, paper: dict[str, Any], translate: bool = False) -> str:
+    pub_date = paper["published"].replace("T", " ").replace("Z", "")
+    title = paper.get("translated_title") if translate and paper.get("translated_title") else paper.get("title")
+    summary = paper.get("translated_summary") if translate and paper.get("translated_summary") else paper.get("summary")
+    original_block = ""
+    if translate and paper.get("translated_summary"):
+        original_block = f"""
+        <div class="abstract original"><strong>Original Abstract:</strong> {esc(paper.get('summary'))}</div>
+        """
+    return f"""
+    <section class="paper">
+        <h3>[{index}] {esc(title)}</h3>
+        <div class="meta">{esc(pub_date)} · {esc(format_authors(paper.get('authors', [])))}</div>
+        <div class="abstract"><strong>Abstract:</strong> {esc(summary)}</div>
+        {original_block}
+        <div class="links"><a href="{esc(paper.get('link'))}">View Paper</a></div>
+    </section>
+    """
+
+
+def render_usage_summary(usage_summary: dict[str, Any] | None) -> str:
+    if not usage_summary:
+        return ""
+    total_tokens = int(usage_summary.get("total_tokens", 0) or 0)
+    model = usage_summary.get("model") or "unknown"
+    if usage_summary.get("cost_known"):
+        cost_text = f"¥{float(usage_summary.get('cost_cny', 0.0)):.4f}"
+    else:
+        cost_text = "unknown model price"
+    rate = usage_summary.get("usd_cny_rate", "")
+    rate_text = f" (USD/CNY={esc(rate)})" if rate != "" else ""
+    return f"""
+    <section class="usage-summary">
+        <h3>本次 LLM 消耗</h3>
+        <div>Model: {esc(model)}</div>
+        <div>Total tokens: {total_tokens:,}</div>
+        <div>Estimated cost: {esc(cost_text)}{rate_text}</div>
+    </section>
+    """
+
+
+def render_email_content(
+    items: list[dict[str, Any]],
+    days: int,
+    translate: bool,
+    category_label: str,
+    time_window_extended: bool | None,
+    usage_summary: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    current_date = datetime.now().strftime("%Y.%m.%d")
+    extended = time_window_extended if time_window_extended is not None else has_extended_papers(items, days)
+    digest_mode = bool(items and is_digest_item(items[0]))
+
+    subject_bits = [f"Arxiv Daily Research Digest {current_date}", f"{len(items)} papers"]
+    if category_label:
+        subject_bits.append(category_label)
+    if extended:
+        subject_bits.append(f"extended from {days} day(s)")
+    if translate:
+        subject_bits.append("中英文对照")
+    subject = " [" + ", ".join(subject_bits[1:]) + "]"
+    subject = subject_bits[0] + subject
+
+    if not items:
+        content = '<section class="paper"><h3>No Papers Today</h3><p>No new arXiv papers were found.</p></section>'
+    elif digest_mode:
+        content = "\n".join(render_digest_item(i, item) for i, item in enumerate(items, 1))
+    else:
+        content = "\n".join(render_legacy_paper(i, item, translate=translate) for i, item in enumerate(items, 1))
+
+    extension_note = ""
+    if extended:
+        extension_note = f"""
+        <div class="extension-note">
+            The time window was extended beyond {days} day(s) to include enough papers.
+        </div>
+        """
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #222; }}
+            .header {{ background: #f4f4f4; padding: 20px; border-radius: 6px; }}
+            .header h2 {{ margin: 0 0 8px 0; }}
+            .paper {{ margin: 28px 0; padding: 16px; border-left: 4px solid #2563eb; background: #fafafa; }}
+            .paper h3 {{ margin: 0 0 8px 0; font-size: 18px; }}
+            .paper h4 {{ margin: 16px 0 6px 0; }}
+            .meta, .related-meta, .related-date {{ color: #666; font-size: 13px; }}
+            .summary, .focus, .keywords, .abstract {{ font-size: 14px; }}
+            .abstract {{ margin-top: 12px; color: #444; }}
+            .original {{ color: #666; }}
+            .translated {{ background: #eef6ff; padding: 10px; margin: 10px 0; border-radius: 4px; }}
+            .links a {{ display: inline-block; margin-right: 10px; color: #2563eb; }}
+            .related-list {{ padding-left: 20px; }}
+            .related-list li {{ margin-bottom: 10px; }}
+            .empty-related {{ color: #777; font-size: 14px; }}
+            .extension-note {{ background: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; margin: 12px 0; }}
+            .usage-summary {{ margin: 32px 0 0 0; padding: 14px; background: #f6f7f9; border: 1px solid #ddd; border-radius: 6px; }}
+            .usage-summary h3 {{ margin: 0 0 8px 0; font-size: 16px; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h2>Arxiv Daily Research Digest {esc(current_date)}</h2>
+            <div>{esc(category_label or 'arXiv')} · {len(items)} papers</div>
+        </div>
+        {extension_note}
+        {content}
+        {render_usage_summary(usage_summary)}
+    </body>
+    </html>
+    """
+    return subject, html_content
+
+
+def send_email_notification(
+    papers,
+    days=3,
+    translate=False,
+    time_window_extended=None,
+    category_label="hep-ex",
+    usage_summary=None,
+):
+    """发送论文通知邮件."""
     if not EMAIL_FROM or not EMAIL_PASSWORD or not EMAIL_TO:
-        print("⚠️  邮件配置缺失，请设置环境变量：EMAIL_FROM, EMAIL_PASSWORD, EMAIL_TO")
+        print("邮件配置缺失，请设置环境变量：EMAIL_FROM, EMAIL_PASSWORD, EMAIL_TO")
         return False
 
-    # 构建 HTML 邮件内容
-    from datetime import datetime, timedelta, timezone
-
-    # Determine if we had to extend beyond the requested days to get enough papers
-    original_cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    papers_beyond_requested_days = []
-
-    for p in papers:
-        published = datetime.strptime(p['published'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-        if published < original_cutoff:
-            papers_beyond_requested_days.append(p)
-
-    # Use the passed parameter to know if time window was extended, or check based on paper dates
-    # If time_window_extended is not None, use that value; otherwise determine based on paper dates
-    if time_window_extended is not None:
-        has_extended_papers = time_window_extended
-    else:
-        has_extended_papers = len(papers_beyond_requested_days) > 0
-
-    current_date = datetime.now().strftime("%y.%m.%d")
+    subject, html_content = render_email_content(
+        papers,
+        days=days,
+        translate=translate,
+        category_label=category_label,
+        time_window_extended=time_window_extended,
+        usage_summary=usage_summary,
+    )
 
     msg = MIMEMultipart()
-    if has_extended_papers:
-        if translate:
-            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, extended from {days} day(s), 中英文对照]"
-        else:
-            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, extended from {days} day(s)]"
-    else:
-        if translate:
-            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers, 中英文对照]"
-        else:
-            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date} [{len(papers)} papers]"
-
-    if translate:
-        html = """
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; }}
-                .header {{ background-color: #f4f4f4; padding: 20px; border-radius: 5px; }}
-                .paper {{ margin: 30px 0; padding: 15px; border-left: 4px solid #007bff; background-color: #fafafa; }}
-                .title {{ font-size: 18px; font-weight: bold; color: #333; }}
-                .original-title {{ font-size: 14px; font-style: italic; color: #666; }}
-                .meta {{ color: #666; font-size: 14px; margin: 5px 0; }}
-                .abstract {{ color: #444; font-size: 14px; margin: 10px 0; }}
-                .original-abstract {{ color: #666; font-size: 13px; margin: 8px 0; }}
-                .link {{ color: #007bff; text-decoration: none; }}
-                .extension-note {{ background-color: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; margin: 10px 0; }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h2>📚 最新 hep-ex 论文 [中英文对照]</h2>
-                <p>{count} 篇论文 - Arxiv Hep-ex Daily Paper Digest {current_date}</p>
-            </div>
-            {extension_note}
-            {papers_html}
-        </body>
-        </html>
-        """
-    else:
-        html = """
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; }}
-                .header {{ background-color: #f4f4f4; padding: 20px; border-radius: 5px; }}
-                .paper {{ margin: 30px 0; padding: 15px; border-left: 4px solid #007bff; background-color: #fafafa; }}
-                .title {{ font-size: 18px; font-weight: bold; color: #333; }}
-                .meta {{ color: #666; font-size: 14px; margin: 5px 0; }}
-                .abstract {{ color: #444; font-size: 14px; margin: 10px 0; }}
-                .link {{ color: #007bff; text-decoration: none; }}
-                .extension-note {{ background-color: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; margin: 10px 0; }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h2>📚 Arxiv Hep-ex Daily Paper Digest {current_date}</h2>
-                <p>{count} papers</p>
-            </div>
-            {extension_note}
-            {papers_html}
-        </body>
-        </html>
-        """
-
-    # Generate extension note if needed
-    if has_extended_papers:
-        extension_note = f'<div class="extension-note"><strong>ℹ️ Note:</strong> The following papers are from over {days} day(s) ago (time window extended to include at least 5 papers).</div>'
-    else:
-        extension_note = ''
-
-    papers_html = ""
-    for i, p in enumerate(papers, 1):
-        pub_date = p['published'].replace("T", " ").replace("Z", "")
-
-        # Format authors - show only first few and indicate if there are more
-        author_list = p['authors']
-        if len(author_list) > 5:
-            authors_display = ', '.join(author_list[:5]) + f', ... and {len(author_list)-5} more authors'
-        else:
-            authors_display = ', '.join(author_list)
-
-        if translate and 'translated_summary' in p:
-            # Include both translated and original content
-            papers_html += f"""
-            <div class="paper">
-                <div class="title">[{i}] <strong>{p['translated_title']}</strong></div>
-                <div class="original-title">Original Title: {p['title']}</div>
-                <div class="meta">📅 {pub_date}</div>
-                <div class="meta">👤 {authors_display}</div>
-                <div class="abstract">📝 Abstract (中文): {p['translated_summary']}</div>
-                <div class="original-abstract">📝 Abstract (English): {p['summary']}</div>
-                <a class="link" href="{p['link']}">🔗 View Paper</a>
-            </div>
-            """
-        else:
-            papers_html += f"""
-            <div class="paper">
-                <div class="title">[{i}] <strong>{p['title']}</strong></div>
-                <div class="meta">📅 {pub_date}</div>
-                <div class="meta">👤 {authors_display}</div>
-                <div class="abstract">📝 {p['summary']}</div>
-                <a class="link" href="{p['link']}">🔗 View Paper</a>
-            </div>
-            """
-
-    from datetime import datetime
-    current_date_full_year = datetime.now().strftime("%Y.%m.%d")
-    html_content = html.format(count=len(papers), days=days, papers_html=papers_html, current_date=current_date_full_year, extension_note=extension_note)
-
-    msg = MIMEMultipart()
-    if has_extended_papers:
-        if translate:
-            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date_full_year} [{len(papers)} papers, extended from {days} day(s), 中英文对照]"
-        else:
-            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date_full_year} [{len(papers)} papers, extended from {days} day(s)]"
-    else:
-        if translate:
-            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date_full_year} [{len(papers)} papers, 中英文对照]"
-        else:
-            msg['Subject'] = f"Arxiv Hep-ex Daily Paper Digest {current_date_full_year} [{len(papers)} papers]"
-
-    msg['From'] = EMAIL_FROM
-    msg['To'] = EMAIL_TO
-
-    msg.attach(MIMEText(html_content, 'html'))
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_FROM
+    msg["To"] = EMAIL_TO
+    msg.attach(MIMEText(html_content, "html"))
 
     try:
         print(f"正在连接 {SMTP_SERVER}:{SMTP_PORT}...")
-
-        # 根据端口选择 SSL 或 STARTTLS
         if SMTP_PORT == 465 or SMTP_USE_SSL:
-            # SSL 连接（如 163 邮箱 465 端口）
             server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
-            print(f"使用 SSL 连接...")
+            print("使用 SSL 连接...")
         else:
-            # STARTTLS 连接（如 Gmail 587 端口）
             server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
             server.starttls()
-            print(f"使用 STARTTLS 连接...")
+            print("使用 STARTTLS 连接...")
 
-        server.set_debuglevel(0)  # 关闭调试模式
+        server.set_debuglevel(0)
         print(f"正在登录 {EMAIL_FROM}...")
         server.login(EMAIL_FROM, EMAIL_PASSWORD)
         print(f"正在发送邮件到 {EMAIL_TO}...")
         server.send_message(msg)
         server.quit()
-        print(f"✅ 邮件已发送至 {EMAIL_TO}")
+        print(f"邮件已发送至 {EMAIL_TO}")
         return True
     except smtplib.SMTPAuthenticationError as e:
-        print(f"❌ SMTP 认证失败：{e}")
-        print("   请检查 EMAIL_FROM 和 EMAIL_PASSWORD 是否正确")
-        print("   Gmail/163 用户需要使用'授权码/应用专用密码'，不是登录密码")
+        print(f"SMTP 认证失败：{e}")
+        print("请检查 EMAIL_FROM 和 EMAIL_PASSWORD 是否正确")
+        print("Gmail/163 用户需要使用授权码/应用专用密码，不是登录密码")
         return False
     except smtplib.SMTPConnectError as e:
-        print(f"❌ SMTP 连接失败：{e}")
-        print(f"   请检查 SMTP_SERVER ({SMTP_SERVER}) 和 SMTP_PORT ({SMTP_PORT}) 是否正确")
+        print(f"SMTP 连接失败：{e}")
+        print(f"请检查 SMTP_SERVER ({SMTP_SERVER}) 和 SMTP_PORT ({SMTP_PORT}) 是否正确")
         return False
     except Exception as e:
-        print(f"❌ 邮件发送失败：{e}")
+        print(f"邮件发送失败：{e}")
         return False
