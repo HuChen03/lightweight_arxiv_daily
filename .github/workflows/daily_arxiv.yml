@@ -48,6 +48,7 @@ jobs:
         env:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USE_SSL: ${{ vars.SMTP_USE_SSL || 'false' }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
@@ -55,6 +56,10 @@ jobs:
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
           LLM_MODEL: ${{ vars.LLM_MODEL || 'gpt-4o-mini' }}
           USD_CNY_RATE: ${{ vars.USD_CNY_RATE || '7.2' }}
+          INCLUDE_CROSS_LIST: ${{ vars.INCLUDE_CROSS_LIST || 'false' }}
+          RELATED_SEARCH_LIMIT: ${{ vars.RELATED_SEARCH_LIMIT || '20' }}
+          MAX_QUERY_TERMS: ${{ vars.MAX_QUERY_TERMS || '5' }}
+          TRANSLATE_TITLES: ${{ vars.TRANSLATE_TITLES || 'false' }}
         run: |
           CATEGORY="${{ github.event.inputs.category || vars.ARXIV_CATEGORY || 'hep-ex' }}"
           DAYS="${{ github.event.inputs.days || 1 }}"
