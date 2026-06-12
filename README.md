@@ -1,12 +1,12 @@
 # Lightweight arXiv Daily
 
-每天自动获取指定 arXiv 领域的新文章，调用 OpenAI 兼容 LLM 分析关键词，再用关键词在 arXiv 上检索相关论文，并通过控制台或邮件输出研究 digest。
+每天自动获取指定 arXiv 领域的新文章，调用 OpenAI 兼容 LLM 分析关键词，再用关键词检索最近一年高引用相关论文，并通过控制台或邮件输出研究 digest。
 
 ## 功能
 
 - 获取一个或多个 arXiv category 下的新论文，例如 `hep-ex`、`cs.AI,cs.LG`
-- 调用 LLM 为每篇新论文生成关键词、arXiv 查询词、中文摘要和研究关注点
-- 用 LLM 生成的查询词二次检索 arXiv 相关论文
+- 调用 LLM 为每篇新论文生成关键词、中文摘要和研究关注点
+- 用 LLM 生成的关键词检索最近一年高引用相关论文；优先使用 OpenAlex citation 数据，Semantic Scholar 作为备用，最后降级为 arXiv 关键词检索
 - 支持 HTML 邮件通知
 - 邮件末尾展示本次 LLM total tokens 和人民币估算费用
 - 支持 GitHub Actions 每日自动运行
@@ -40,8 +40,8 @@ USD_CNY_RATE=7.2
 3. 运行：
 
 ```bash
-# 抓取 hep-ex 最近 1 天论文，LLM 分析关键词，并检索相关论文
-python main.py --category hep-ex --days 1 --max-results 30
+# 抓取 hep-ex 最近 24 小时论文，最多 10 篇，LLM 分析关键词，并检索相关论文
+python main.py --category hep-ex --days 1 --max-results 10
 
 # 多个领域
 python main.py --category "cs.AI,cs.LG,cs.CL" --days 1
@@ -59,17 +59,10 @@ python main.py --category hep-ex --days 1 --max-results 3 --related-per-paper 2 
 |------|------|--------|
 | `--category` | arXiv category，多个用逗号分隔 | `hep-ex` |
 | `--days` | 搜索过去几天的新论文 | `3` |
-| `--max-results` | 最多处理多少篇源论文 | `100` |
-| `--min-results` | 最近窗口论文太少时扩展到的最小数量 | `5` |
+| `--max-results` | 最多处理多少篇源论文 | `10` |
 | `--related-per-paper` | 每篇源论文保留多少篇相关论文 | `5` |
-| `--related-search-limit` | 每次相关检索抓取多少候选论文 | `20` |
-| `--max-query-terms` | 每篇论文最多使用多少个 LLM 查询词 | `5` |
-| `--include-cross-list` | 是否包含 cross-listed 论文 | false |
 | `--email` | 发送邮件通知 | false |
-| `--translate` | 对源论文标题和摘要做中译 | false |
 | `--skip-llm` | 跳过 LLM，使用本地关键词降级逻辑 | false |
-| `--llm-model` | OpenAI 兼容模型名 | `gpt-4o-mini` |
-| `--llm-base-url` | OpenAI 兼容 API base URL | `OPENAI_API_BASE` |
 
 ## 环境变量
 
@@ -82,13 +75,13 @@ EMAIL_TO=recipient@example.com
 
 ARXIV_CATEGORY=hep-ex
 ARXIV_DAYS=1
-ARXIV_MAX_RESULTS=30
-ARXIV_MIN_RESULTS=5
+ARXIV_MAX_RESULTS=10
 INCLUDE_CROSS_LIST=false
 
 RELATED_PER_PAPER=5
 RELATED_SEARCH_LIMIT=20
 MAX_QUERY_TERMS=5
+TRANSLATE_TITLES=false
 
 OPENAI_API_KEY=sk-xxx
 OPENAI_API_BASE=https://api.openai.com/v1
@@ -100,7 +93,7 @@ LLM_INPUT_PRICE_USD_PER_1M=0.15
 LLM_OUTPUT_PRICE_USD_PER_1M=0.60
 ```
 
-LLM 输出固定为中文摘要和中文关注点；关键词和 arXiv 查询词固定为英文技术术语，便于检索。
+LLM 输出固定为中文摘要和中文关注点；关键词固定为英文技术术语，便于检索。
 
 ## GitHub Actions 部署
 
@@ -121,12 +114,30 @@ LLM 输出固定为中文摘要和中文关注点；关键词和 arXiv 查询词
 | Variable Name | 说明 | 示例 |
 |---------------|------|------|
 | `ARXIV_CATEGORY` | 默认 arXiv category | `hep-ex` |
-| `ARXIV_MAX_RESULTS` | 默认源论文数量 | `30` |
+| `ARXIV_MAX_RESULTS` | 默认源论文数量 | `10` |
 | `RELATED_PER_PAPER` | 默认相关论文数量 | `5` |
 | `LLM_MODEL` | 默认模型 | `gpt-4o-mini` |
 | `USD_CNY_RATE` | 美元兑人民币估算汇率 | `7.2` |
 
 workflow 默认每天 UTC 0:00 运行，也可以在 Actions 页面手动触发并指定 category、days、max_results 和 related_per_paper。
+
+## 项目结构
+
+```text
+.
+├── main.py                 # CLI 参数解析和主流程编排
+├── config.py               # .env 加载、默认值和通用配置解析
+├── arxiv_client.py         # arXiv 查询、Atom 解析、最近论文筛选
+├── openalex_client.py      # OpenAlex 高引用相关论文检索
+├── semantic_scholar_client.py # Semantic Scholar 高引用相关论文检索
+├── llm_analyzer.py         # LLM 调用、JSON 解析、本地关键词降级
+├── digest.py               # 源论文分析和相关论文检索编排
+├── pricing.py              # token usage 汇总和人民币费用估算
+├── report.py               # 控制台报告输出
+├── email_renderer.py       # HTML 邮件内容渲染
+├── email_notifier.py       # SMTP 发送
+└── translation.py          # 可选标题/摘要翻译
+```
 
 ## 参考项目
 

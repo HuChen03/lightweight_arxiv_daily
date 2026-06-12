@@ -17,7 +17,7 @@ on:
       max_results:
         description: 'Maximum source papers'
         required: false
-        default: '30'
+        default: '10'
       related_per_paper:
         description: 'Related papers per source paper'
         required: false
@@ -58,7 +58,7 @@ jobs:
         run: |
           CATEGORY="${{ github.event.inputs.category || vars.ARXIV_CATEGORY || 'hep-ex' }}"
           DAYS="${{ github.event.inputs.days || 1 }}"
-          MAX_RESULTS="${{ github.event.inputs.max_results || vars.ARXIV_MAX_RESULTS || 30 }}"
+          MAX_RESULTS="${{ github.event.inputs.max_results || vars.ARXIV_MAX_RESULTS || 10 }}"
           RELATED_PER_PAPER="${{ github.event.inputs.related_per_paper || vars.RELATED_PER_PAPER || 5 }}"
           EMAIL="${{ github.event.inputs.email || 'true' }}"
           EMAIL_FLAG=""
